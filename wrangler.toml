@@ -1,0 +1,6 @@
+name = "sub-converter"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# 如果你需要使用 KV 或其他绑定，在这里配置
+# 但对于当前这个纯代码项目，上面三行就足够了
