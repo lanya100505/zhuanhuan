@@ -1,4 +1,4 @@
-name = "zhuanhuan"
+name = "zhuanhuanserv00"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
