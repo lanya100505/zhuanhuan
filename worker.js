@@ -1,7 +1,7 @@
 /**
  * V2rayN 订阅转 Clash Meta (Mihomo) 转换器
  * 运行在 Cloudflare Workers
- * Fixed: Hysteria2 Parsing & Robustness
+ * Fixed: TUIC Support Added
  */
 
 export default {
@@ -60,11 +60,12 @@ export default {
           } else if (trimLine.startsWith('ss://')) {
             proxy = parseSS(trimLine);
           } else if (trimLine.startsWith('hy2://') || trimLine.startsWith('hysteria2://')) {
-            // 新增 hysteria2:// 支持
             proxy = parseHysteria2(trimLine);
+          } else if (trimLine.startsWith('tuic://')) {
+            // 新增 TUIC 支持
+            proxy = parseTuic(trimLine);
           }
         } catch (e) {
-          // 仅打印错误，不中断整个流程
           console.error(`解析单行失败: ${line.substring(0, 50)}...`, e);
         }
 
@@ -107,12 +108,15 @@ export default {
 function safeBase64Decode(str) {
   if (!str) return '';
   str = str.trim();
+  // 检查是否是 HTML
   if (str.toLowerCase().startsWith('<!doctype') || str.toLowerCase().startsWith('<html')) {
     throw new Error("订阅链接返回了 HTML 页面而非订阅数据。");
   }
-  if (str.includes('vmess://') || str.includes('vless://') || str.includes('ss://') || str.includes('hy2://') || str.includes('hysteria2://')) {
+  // 检查是否已经是明文
+  if (str.includes('vmess://') || str.includes('vless://') || str.includes('ss://') || str.includes('hy2://') || str.includes('tuic://')) {
     return str;
   }
+  // 清洗
   str = str.replace(/\s/g, '');
   str = str.replace(/-/g, '+').replace(/_/g, '/');
   while (str.length % 4) str += '=';
@@ -164,7 +168,6 @@ function parseVmess(line) {
 }
 
 function parseVless(line) {
-  // 手动提取 fragment 以防 URL 解析失败
   let hash = '';
   const hashIndex = line.lastIndexOf('#');
   if (hashIndex !== -1) {
@@ -283,25 +286,21 @@ function parseSS(line) {
 }
 
 function parseHysteria2(line) {
-  // 1. 手动分离 Name (Hash) 以防止 URL 解析错误
   let name = 'hy2-node';
   const hashIndex = line.lastIndexOf('#');
   if (hashIndex !== -1) {
     name = decodeURIComponent(line.substring(hashIndex + 1));
-    line = line.substring(0, hashIndex); // 移除 hash 部分给 URL 解析
+    line = line.substring(0, hashIndex);
   }
 
-  // 2. 兼容 hysteria2:// 前缀
   if (line.startsWith('hy2://')) {
-     // standard
   } else if (line.startsWith('hysteria2://')) {
-     line = line.replace('hysteria2://', 'hy2://'); // URL 类可能不识别 hysteria2 协议头，统一转为 hy2 或 https 处理
+     line = line.replace('hysteria2://', 'hy2://');
   }
 
   const url = new URL(line);
   const params = url.searchParams;
 
-  // 3. 构建 Clash Meta 代理对象
   const proxy = {
     name: name,
     type: 'hysteria2',
@@ -313,16 +312,55 @@ function parseHysteria2(line) {
     udp: true
   };
 
-  // 4. 处理混淆 (Obfs)
-  // 标准参数是 obfs 和 obfs-password
   if (params.get('obfs')) {
     proxy.obfs = params.get('obfs');
     proxy['obfs-password'] = params.get('obfs-password');
   }
-
-  // 5. 处理 ALPN (Clash Meta 有时需要)
+  
   if (params.get('alpn')) {
     proxy.alpn = params.get('alpn').split(',');
+  }
+
+  return proxy;
+}
+
+function parseTuic(line) {
+  // TUIC v5 格式: tuic://uuid:password@host:port?params#name
+  let name = 'tuic-node';
+  const hashIndex = line.lastIndexOf('#');
+  if (hashIndex !== -1) {
+    name = decodeURIComponent(line.substring(hashIndex + 1));
+    line = line.substring(0, hashIndex);
+  }
+
+  const url = new URL(line);
+  const params = url.searchParams;
+
+  const proxy = {
+    name: name,
+    type: 'tuic',
+    server: url.hostname,
+    port: parseInt(url.port),
+    uuid: url.username,
+    password: url.password,
+    sni: params.get('sni') || url.hostname,
+    'skip-cert-verify': params.get('allow_insecure') === '1',
+    udp: true,
+    'disable-sni': params.get('disable_sni') === '1',
+    'reduce-rtt': true // 默认开启以优化延迟
+  };
+
+  // 可选参数映射
+  if (params.get('alpn')) {
+    proxy.alpn = params.get('alpn').split(',');
+  }
+  
+  if (params.get('congestion_controller')) {
+    proxy['congestion-controller'] = params.get('congestion_controller');
+  }
+  
+  if (params.get('udp_relay_mode')) {
+    proxy['udp-relay-mode'] = params.get('udp_relay_mode');
   }
 
   return proxy;
@@ -406,7 +444,7 @@ function helpText(origin) {
     <p>这是一个运行在 Cloudflare Workers 上的轻量级订阅转换工具。</p>
     
     <div class="box">
-      <label>输入你的 V2Ray/Trojan/Hy2 订阅链接:</label>
+      <label>输入你的 V2Ray/Trojan/Hy2/TUIC 订阅链接:</label>
       <input type="text" id="subUrl" placeholder="https://example.com/subscribe/...">
       <button onclick="convert()">生成 Clash 订阅</button>
       
